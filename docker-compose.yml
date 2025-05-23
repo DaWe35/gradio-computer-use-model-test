@@ -1,0 +1,8 @@
+services:
+  gradio-ui-tars:
+    build: .
+    ports:
+      - "7860:7860"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped 
