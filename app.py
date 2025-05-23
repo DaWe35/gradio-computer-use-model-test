@@ -6,20 +6,6 @@ from PIL import Image, ImageDraw
 import io
 import numpy as np
 
-# Popular OpenRouter models that support vision
-POPULAR_VISION_MODELS = [
-    "meta-llama/llama-3.2-11b-vision-instruct:free",
-    "anthropic/claude-3.5-sonnet",
-    "google/gemini-2.5-flash-preview",
-    "google/gemini-flash-1.5",
-    "openai/gpt-4o",
-    "openai/gpt-4o-mini",
-    "qwen/qwen3-32b",
-    "meta-llama/llama-3.2-90b-vision-instruct",
-    "anthropic/claude-3-haiku",
-    "google/gemini-pro-vision"
-]
-
 class OpenRouterClient:
     def __init__(self, api_key, base_url="https://openrouter.ai/api/v1"):
         self.api_key = api_key
@@ -49,7 +35,7 @@ class OpenRouterClient:
                         "content": [
                             {
                                 "type": "text",
-                                "text": prompt + "\nReturn only the pixel coordinates as [x,y]."
+                                "text": prompt
                             },
                             {
                                 "type": "image_url",
@@ -143,7 +129,7 @@ def draw_red_dot(image, x, y, dot_size=20):
     
     return img_copy
 
-def process_image(image, api_key, base_url, model, custom_prompt):
+def process_image(image, api_key, base_url, model, user_prompt):
     """Process the image and return coordinates with marked image"""
     if image is None:
         return None, "Please upload an image first."
@@ -151,17 +137,20 @@ def process_image(image, api_key, base_url, model, custom_prompt):
     if not api_key:
         return None, "Please provide an OpenRouter API key."
     
-    if not model:
-        return None, "Please select a model."
+    if not model or not model.strip():
+        return None, "Please enter a model ID."
     
-    # Use custom prompt if provided, otherwise use default
-    prompt = custom_prompt + "\nReturn only the pixel coordinates as [x,y]."
+    if not user_prompt or not user_prompt.strip():
+        return None, "Please enter a prompt describing what to find."
+    
+    # Always extend the user prompt to ensure array format response
+    extended_prompt = f"{user_prompt.strip()}\n\nIMPORTANT: You must respond with ONLY the pixel coordinates in the exact format [x,y] where x and y are numbers. Do not include any other text or explanation."
     
     # Initialize OpenRouter client
     client = OpenRouterClient(api_key, base_url)
     
     # Get pixel coordinates
-    x, y, response_text = client.get_pixel_coordinates(image, model, prompt)
+    x, y, response_text = client.get_pixel_coordinates(image, model.strip(), extended_prompt)
     
     if x is not None and y is not None:
         # Get image dimensions for debugging
@@ -179,6 +168,9 @@ Image size: {img_width} x {img_height}
 Coordinate status: {coord_status}
 Model: {model}
 
+User prompt: {user_prompt}
+Extended prompt: {extended_prompt}
+
 Raw model response:
 {response_text}"""
         
@@ -192,7 +184,7 @@ with gr.Blocks(title="OpenRouter Vision Pixel Detector", theme=gr.themes.Soft())
     # 🎯 OpenRouter Vision Pixel Detector
     
     Upload an image and let AI models detect and mark pixel coordinates on objects.
-    Choose from popular vision models or enter any custom OpenRouter model ID.
+    Enter any OpenRouter model ID to use for vision analysis.
     """)
     
     with gr.Row():
@@ -211,25 +203,18 @@ with gr.Blocks(title="OpenRouter Vision Pixel Detector", theme=gr.themes.Soft())
                 placeholder="https://openrouter.ai/api/v1"
             )
             
-            with gr.Row():
-                model_dropdown = gr.Dropdown(
-                    choices=POPULAR_VISION_MODELS,
-                    value="meta-llama/llama-3.2-11b-vision-instruct:free",
-                    label="Popular Vision Models",
-                    info="Select from popular models or use custom input below"
-                )
-            
-            custom_model_input = gr.Textbox(
-                label="Custom Model (Optional)",
+            model_input = gr.Textbox(
+                label="Model ID",
+                value="google/gemini-2.5-flash-preview-05-20",
                 placeholder="e.g., anthropic/claude-3.5-sonnet",
-                info="Override dropdown selection with any OpenRouter model ID"
+                info="Enter any OpenRouter model ID that supports vision"
             )
             
             custom_prompt_input = gr.Textbox(
-                label="Custom Prompt (Optional)",
+                label="Prompt (Required)",
                 placeholder="e.g., 'Click on the person's face' or 'Find the red car'",
                 lines=2,
-                info="Leave empty to use default prompt"
+                info="Describe what you want to find in the image"
             )
             
             process_btn = gr.Button("🔍 Analyze Image", variant="primary", size="lg")
@@ -255,46 +240,43 @@ with gr.Blocks(title="OpenRouter Vision Pixel Detector", theme=gr.themes.Soft())
                 interactive=False
             )
     
-    def get_selected_model(dropdown_model, custom_model):
-        """Return custom model if provided, otherwise dropdown selection"""
-        return custom_model.strip() if custom_model.strip() else dropdown_model
-    
     # Event handlers
     process_btn.click(
-        fn=lambda img, key, url, dropdown_model, custom_model, prompt: process_image(
-            img, key, url, get_selected_model(dropdown_model, custom_model), prompt
-        ),
-        inputs=[input_image, api_key_input, base_url_input, model_dropdown, custom_model_input, custom_prompt_input],
+        fn=process_image,
+        inputs=[input_image, api_key_input, base_url_input, model_input, custom_prompt_input],
         outputs=[output_image, result_text]
     )
     
     # Auto-process when image is uploaded (if API key is provided)
     input_image.change(
-        fn=lambda img, key, url, dropdown_model, custom_model, prompt: (
-            process_image(img, key, url, get_selected_model(dropdown_model, custom_model), prompt) 
+        fn=lambda img, key, url, model, prompt: (
+            process_image(img, key, url, model, prompt) 
             if key else (None, "Please provide API key first")
         ),
-        inputs=[input_image, api_key_input, base_url_input, model_dropdown, custom_model_input, custom_prompt_input],
+        inputs=[input_image, api_key_input, base_url_input, model_input, custom_prompt_input],
         outputs=[output_image, result_text]
     )
     
     gr.Markdown("""
     ### 📋 Instructions:
     1. **Get an API key** from [OpenRouter](https://openrouter.ai/) and paste it above
-    2. **Select a model** from the dropdown or enter a custom model ID
-    3. **Upload an image** using the input area
-    4. **Optionally customize** the prompt to specify what to find
+    2. **Enter a model ID** (default: UI-TARS-72B for computer vision tasks)
+    3. **Enter a prompt** describing what you want to find in the image (required)
+    4. **Upload an image** using the input area
     5. **Click Analyze** or wait for auto-processing
     6. **View results** - the output image will show a red dot at the detected coordinates
     
-    ### 🤖 Popular Models:
-    - **UI-TARS-72B**: Specialized for UI and computer vision tasks
-    - **Claude 3.5 Sonnet**: Excellent reasoning and vision capabilities
-    - **Gemini 2.5 Flash**: Fast and accurate multimodal processing
-    - **GPT-4o**: OpenAI's flagship vision model
-    - **Qwen3-32B**: Strong open-source vision model
+    ### 🤖 Popular Vision Model IDs:
+    - `bytedance-research/ui-tars-72b` - Specialized for UI and computer vision tasks
+    - `anthropic/claude-3.5-sonnet` - Excellent reasoning and vision capabilities
+    - `google/gemini-2.5-flash-preview` - Fast and accurate multimodal processing
+    - `openai/gpt-4o` - OpenAI's flagship vision model
+    - `qwen/qwen3-32b` - Strong open-source vision model
+    - `meta-llama/llama-3.2-90b-vision-instruct` - Meta's large vision model
     
     ### 💡 Tips:
+    - **Required prompt**: You must always enter a prompt describing what to find
+    - **Automatic extension**: Your prompt will be automatically extended to ensure array format response
     - Different models may interpret images differently
     - Some models work better with specific types of images
     - Try multiple models to compare results
@@ -307,4 +289,4 @@ if __name__ == "__main__":
         server_port=7860,
         share=False,
         show_error=True
-    ) 
+    )
